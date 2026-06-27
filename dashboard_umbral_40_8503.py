@@ -6,13 +6,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import datetime
 from io import BytesIO
-import os
 from pathlib import Path
 import joblib
+import os
 
 st.set_page_config(layout="wide", page_title="Análisis de Desgaste — Equipo Crítico", page_icon="⚙️")
 st.title("📊 Análisis de Desgaste — Equipo Crítico")
-st.caption(f"Versión 2.3 | Autor: Leonidas Silva | {datetime.now().strftime('%Y-%m-%d')}")
+st.caption(f"Versión 2.3 | Autor: Leonidas | {datetime.now().strftime('%Y-%m-%d')}")
 
 # --- Paleta de colores ---
 COLOR_MAP = {
@@ -40,11 +40,11 @@ def save_plot(fig, prefix):
 # --- Cargar datos con rutas seguras ---
 @st.cache_data
 def load_all_data():
-    base_dir = os.getcwd()
-    xls_path = os.path.join(base_dir, 'Sample_Reports_Mod_Test.xls')
+    base_dir = Path(__file__).parent
+    xls_path = base_dir / "Sample_Reports_Mod_Test.xls"
     
-    if not os.path.exists(xls_path):
-        st.error("Archivo 'Sample_Reports_Mod_Test.xls' no encontrado.")
+    if not xls_path.exists():
+        st.error("Archivo 'Sample_Reports_Mod_Test.xls' no encontrado en la raíz.")
         return pd.DataFrame(columns=['UNIT_ID', 'COMPONENT_TYPE', 'HOURS_OIL', 'DATE_ANALIZED'])
 
     try:
@@ -110,13 +110,12 @@ df_comp = df_all[
 last_hour = "N/A"
 last_date = "N/A"
 
-if not df_comp.empty and 'DATE_ANALIZED' in df_comp.columns:
+if not df_comp.empty:
     df_valid = df_comp.dropna(subset=['DATE_ANALIZED'])
     if not df_valid.empty:
         df_latest = df_valid.loc[df_valid['DATE_ANALIZED'].idxmax()]
         last_hour = df_latest['HOURS_OIL']
         if pd.notna(df_latest['DATE_ANALIZED']):
-            # Formato: Mayo-09-2026
             month_names = {
                 1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
                 5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
@@ -127,13 +126,11 @@ if not df_comp.empty and 'DATE_ANALIZED' in df_comp.columns:
         else:
             last_date = "N/A"
     else:
-        last_hour = "N/A"
-        last_date = "N/A"
+        last_hour, last_date = "N/A", "N/A"
 else:
-    last_hour = "N/A"
-    last_date = "N/A"
+    last_hour, last_date = "N/A", "N/A"
 
-# --- Barra de metadata + predicción integrada ---
+# --- Barra de metadata + predicción ---
 col1, col2 = st.columns([3, 1])
 
 with col1:
@@ -145,63 +142,64 @@ with col1:
     )
 
 with col2:
-    # Cargar modelo con ruta robusta (funciona en Streamlit Cloud)
+    # Cargar modelo con ruta robusta
     pred_value = "N/A"
-    risk_label = "❓ Sin modelo"
+    risk_label = "📁 Falta modelo"
     risk_color = "#6c757d"
     
     try:
-        # Usar pathlib para evitar problemas de ruta en Cloud
         root = Path(__file__).parent
         model_path = root / "model_remaining_life.joblib"
         encoder_path = root / "label_encoder_component.joblib"
         
         if model_path.exists() and encoder_path.exists():
-            model = joblib.load(model_path)
-            le = joblib.load(encoder_path)
-            
-            row = df_comp.iloc[0]
-            
-            def safe_float(x):
-                return float(x) if pd.notna(x) and str(x).replace('.', '').replace('-', '').isdigit() else 0.0
-            
-            features = {
-                'Fe (ppm)': safe_float(row.get('Fe (ppm)', 0)),
-                'Cu (ppm)': safe_float(row.get('Cu (ppm)', 0)),
-                'Si (ppm)': safe_float(row.get('Si (ppm)', 0)),
-                'V100C': safe_float(row.get('V100C', 0)),
-                'TBN (mgKOH/g)': safe_float(row.get('TBN (mgKOH/g)', 0)),
-                'HOURS_OIL': safe_float(row.get('HOURS_OIL', 0)),
-                'BUDGET': safe_float(row.get('BUDGET', 8000)),
-            }
-            comp_encoded = le.transform([row['COMPONENT_TYPE']])[0] if row['COMPONENT_TYPE'] in le.classes_ else 0
-            features['COMPONENT_ENCODED'] = comp_encoded
-            
-            X_pred = pd.DataFrame([features])
-            pred = float(model.predict(X_pred)[0])
-            pred_value = f"{int(pred):,} h"
-            
-            if pred < 0:
-                risk_label = "❗ Crítico"
-                risk_color = "#dc2626"
-            elif pred < 500:
-                risk_label = "⚠️ Alto"
-                risk_color = "#f59e0b"
-            elif pred < 1500:
-                risk_label = "🟡 Medio"
-                risk_color = "#f59e0b"
-            else:
-                risk_label = "✓ Bajo"
-                risk_color = "#10b981"
+            try:
+                model = joblib.load(model_path)
+                le = joblib.load(encoder_path)
+                
+                row = df_comp.iloc[0]
+                
+                def safe_float(x):
+                    return float(x) if pd.notna(x) and str(x).replace('.', '').replace('-', '').isdigit() else 0.0
+                
+                features = {
+                    'Fe (ppm)': safe_float(row.get('Fe (ppm)', 0)),
+                    'Cu (ppm)': safe_float(row.get('Cu (ppm)', 0)),
+                    'Si (ppm)': safe_float(row.get('Si (ppm)', 0)),
+                    'V100C': safe_float(row.get('V100C', 0)),
+                    'TBN (mgKOH/g)': safe_float(row.get('TBN (mgKOH/g)', 0)),
+                    'HOURS_OIL': safe_float(row.get('HOURS_OIL', 0)),
+                    'BUDGET': safe_float(row.get('BUDGET', 8000)),
+                }
+                comp_encoded = le.transform([row['COMPONENT_TYPE']])[0] if row['COMPONENT_TYPE'] in le.classes_ else 0
+                features['COMPONENT_ENCODED'] = comp_encoded
+                
+                X_pred = pd.DataFrame([features])
+                pred = float(model.predict(X_pred)[0])
+                pred_value = f"{int(pred):,} h"
+                
+                if pred < 0:
+                    risk_label = "❗ Crítico"
+                    risk_color = "#dc2626"
+                elif pred < 500:
+                    risk_label = "⚠️ Alto"
+                    risk_color = "#f59e0b"
+                elif pred < 1500:
+                    risk_label = "🟡 Medio"
+                    risk_color = "#f59e0b"
+                else:
+                    risk_label = "✓ Bajo"
+                    risk_color = "#10b981"
+            except Exception as e:
+                pred_value = "Error"
+                risk_label = f"💥 {type(e).__name__[:10]}"
+                risk_color = "#6c757d"
         else:
-            pred_value = "N/A"
-            risk_label = "📁 Falta modelo"
-            risk_color = "#6c757d"
+            # st.warning(f"Modelos no encontrados en: {root}")
+            pred_value, risk_label, risk_color = "N/A", "📁 Falta modelo", "#6c757d"
             
     except Exception as e:
-        pred_value = "Error"
-        risk_label = f"💥 {type(e).__name__[:10]}"
-        risk_color = "#6c757d"
+        pred_value, risk_label, risk_color = "Error", f"⚠️ {type(e).__name__}", "#6c757d"
 
     st.markdown(
         f"""
@@ -345,8 +343,8 @@ with st.expander("📋 Datos Operativos", expanded=False):
         latest = df_comp.sort_values('HOURS_OIL', ascending=False).iloc[0]
         st.write(f"**Horas aceite (ciclo):** {latest['HOURS_OIL']:.0f} h")
         try:
-            inst_path = os.path.join(os.getcwd(), 'COMPONENTS_DRILLS_INSTALLED.xls')
-            if os.path.exists(inst_path):
+            inst_path = Path(__file__).parent / "COMPONENTS_DRILLS_INSTALLED.xls"
+            if inst_path.exists():
                 df_inst = pd.read_excel(inst_path, sheet_name='INSTALLED')
                 df_inst['UNIT_ID'] = df_inst['UNIT_ID'].astype(str).str.strip()
                 df_inst['COMPONENT_LOCATION'] = df_inst['COMPONENT_LOCATION'].astype(str).str.strip()
@@ -358,8 +356,8 @@ with st.expander("📋 Datos Operativos", expanded=False):
                     r = row.iloc[0]
                     st.write(f"- Budget: {r['BUDGET']:.0f} h")
                     st.write(f"- Restante: {r['REMAINING_LIFE']:.0f} h")
-        except Exception:
-            st.write("- No se pudo cargar COMPONENTS_DRILLS_INSTALLED.xls")
+        except Exception as e:
+            st.write(f"- Error cargando COMPONENTS_DRILLS_INSTALLED.xls: {type(e).__name__}")
     else:
         st.write("No hay datos")
 
