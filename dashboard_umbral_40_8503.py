@@ -12,7 +12,7 @@ import joblib
 
 st.set_page_config(layout="wide", page_title="Análisis de Desgaste — Equipo Crítico", page_icon="⚙️")
 st.title("📊 Análisis de Desgaste — Equipo Crítico")
-st.caption(f"Versión 2.3 | Autor: Leonidas | {datetime.now().strftime('%Y-%m-%d')}")
+st.caption(f"Versión 2.3 | Autor: Leonidas Silva | {datetime.now().strftime('%Y-%m-%d')}")
 
 # --- Paleta de colores ---
 COLOR_MAP = {
