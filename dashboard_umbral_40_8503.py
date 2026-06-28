@@ -172,11 +172,11 @@ with col1:
         unsafe_allow_html=True
     )
 
-# --- Contexto operativo (CORREGIDO: usa COMPONENTS_DRILLS_INSTALLED.xls, formato fecha, color dinámico) ---
-st.markdown("### 📋 Contexto operativo")
-col1, col2, col3, col4 = st.columns(4)
+# --- Pre-calcular predicción para cuadro destacado ---
+pred_value = "N/A"
+risk_label = "📁 Falta modelo"
+risk_color = "#6c757d"
 
-# Helper seguro
 def safe_float(x, default=np.nan):
     if pd.isna(x) or x is None:
         return default
@@ -185,32 +185,104 @@ def safe_float(x, default=np.nan):
     except:
         return default
 
-def safe_str(x, default="N/A"):
-    if pd.isna(x) or x is None:
-        return default
-    return str(x)
-
-# Extraer valores desde df_inst (no desde df_comp)
-serial = safe_str(unit_sel)
-component = safe_str(component_sel)
-
-# Formatear fecha: AGOSTO-15-2021
-inst_date = "N/A"
-if row_inst is not None and 'FECHA_INSTALACION' in row_inst.index:
-    val = row_inst['FECHA_INSTALACION']
-    if pd.notna(val):
-        try:
-            if isinstance(val, str):
-                val = pd.to_datetime(val)
-            month_names = {
-                1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL',
-                5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
-                9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+try:
+    root = Path(__file__).parent
+    model_path = root / "model_remaining_life.joblib"
+    encoder_path = root / "label_encoder_component.joblib"
+    
+    if model_path.exists() and encoder_path.exists():
+        model = joblib.load(model_path)
+        le = joblib.load(encoder_path)
+        
+        if not df_comp.empty:
+            row = df_comp.iloc[0]
+            features = {
+                'Fe (ppm)': safe_float(row.get('Fe (ppm)', 0)),
+                'Cu (ppm)': safe_float(row.get('Cu (ppm)', 0)),
+                'Si (ppm)': safe_float(row.get('Si (ppm)', 0)),
+                'V100C': safe_float(row.get('V100C', 0)),
+                'TBN (mgKOH/g)': safe_float(row.get('TBN (mgKOH/g)', 0)),
+                'HOURS_OIL': safe_float(row.get('HOURS_OIL', 0)),
+                'BUDGET': safe_float(row.get('BUDGET', 
+                    row_inst['BUDGET'] if row_inst is not None else 15000)),
             }
-            inst_date = f"{month_names[val.month]}-{val.day:02d}-{val.year}"
-        except:
-            inst_date = safe_str(val)
+            comp_encoded = le.transform([row['COMPONENT_TYPE']])[0] if row['COMPONENT_TYPE'] in le.classes_ else 0
+            features['COMPONENT_ENCODED'] = comp_encoded
+            
+            X_pred = pd.DataFrame([features])
+            pred = float(model.predict(X_pred)[0])
+            pred_value = f"{int(pred):,} h"
+            
+            if pred < 0:
+                risk_label = "❗ Crítico"
+                risk_color = "#dc2626"
+            elif pred < 500:
+                risk_label = "⚠️ Alto"
+                risk_color = "#f59e0b"
+            elif pred < 1500:
+                risk_label = "🟡 Medio"
+                risk_color = "#f59e0b"
+            else:
+                risk_label = "✓ Bajo"
+                risk_color = "#10b981"
+        else:
+            pred_value, risk_label = "N/A", "Sin datos de inspección"
+    else:
+        pred_value, risk_label = "N/A", "📁 Falta modelo"
+except Exception:
+    pred_value, risk_label = "Error", "💥 Falló carga"
+    risk_color = "#6c757d"
 
+# --- Cuadro destacado de predicción (independiente) ---
+st.markdown(
+    f"""
+    <div style="
+        background-color: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        padding: 16px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-top: 16px;
+        margin-bottom: 16px;
+    ">
+        <p style="color: #e6edf3; font-size: 0.8rem; margin: 4px 0;">Predicción basada en modelo de Random Forest</p>
+        <p style="color: #c9d1d9; font-size: 0.75rem; margin: 2px 0;">entrenado con historial de fallas</p>
+        <h3 style="color: #c9d1d9; font-size: 1.1rem; margin: 8px 0 4px 0;">Vida restante estimada</h3>
+        <p style="font-size: 2.0rem; font-weight: bold; color: {risk_color}; margin: 4px 0;">{pred_value}</p>
+        <div style="display: inline-block; background-color: #161b22; padding: 3px 10px; border-radius: 5px; font-size: 0.85rem;">
+            <span style="color: {risk_color};">{risk_label}</span>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- Contexto operativo (CORREGIDO) ---
+st.markdown("### 📋 Contexto operativo")
+col1, col2, col3, col4 = st.columns(4)
+
+# Helper para fecha
+def format_fecha(val):
+    if pd.isna(val):
+        return "N/A"
+    try:
+        if isinstance(val, str):
+            val = pd.to_datetime(val)
+        month_names = {
+            1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL',
+            5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
+            9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+        }
+        return f"{month_names[val.month]}-{val.day:02d}-{val.year}"
+    except:
+        return str(val)
+
+# Extraer valores
+serial = str(unit_sel) if unit_sel else "N/A"
+component = str(component_sel) if component_sel else "N/A"
+
+inst_date = format_fecha(row_inst['FECHA_INSTALACION'] if row_inst is not None else None)
 horas_act = safe_float(row_inst['HORAS_VIDA_ACTUAL'] if row_inst is not None else None, default=np.nan)
 budget_val = safe_float(row_inst['BUDGET'] if row_inst is not None else None, default=np.nan)
 
@@ -222,7 +294,7 @@ with col2:
     st.metric("Horas actuales", f"{horas_act:.1f} h" if not np.isnan(horas_act) else "N/A")
 with col3:
     st.metric("Budget", f"{budget_val:.0f} h" if not np.isnan(budget_val) else "N/A")
-    # --- Restante (determinista) con color dinámico ---
+    # Restante (determinista) con color dinámico
     if not np.isnan(horas_act) and not np.isnan(budget_val):
         restante_det = int(budget_val - horas_act)
         if restante_det > 0:
@@ -248,61 +320,8 @@ with col3:
             unsafe_allow_html=True
         )
 with col4:
-    # Modelo (igual que antes — sin cambios)
-    pred_value = "N/A"
-    risk_label = "📁 Falta modelo"
-    risk_color = "#6c757d"
-    
-    try:
-        root = Path(__file__).parent
-        model_path = root / "model_remaining_life.joblib"
-        encoder_path = root / "label_encoder_component.joblib"
-        
-        if model_path.exists() and encoder_path.exists():
-            model = joblib.load(model_path)
-            le = joblib.load(encoder_path)
-            
-            # Para el modelo, usamos df_comp (datos de inspección actual)
-            row = df_comp.iloc[0] if not df_comp.empty else None
-            if row is not None:
-                features = {
-                    'Fe (ppm)': safe_float(row.get('Fe (ppm)', 0)),
-                    'Cu (ppm)': safe_float(row.get('Cu (ppm)', 0)),
-                    'Si (ppm)': safe_float(row.get('Si (ppm)', 0)),
-                    'V100C': safe_float(row.get('V100C', 0)),
-                    'TBN (mgKOH/g)': safe_float(row.get('TBN (mgKOH/g)', 0)),
-                    'HOURS_OIL': safe_float(row.get('HOURS_OIL', 0)),  # ← horas desde último cambio
-                    'BUDGET': safe_float(row.get('BUDGET', budget_val)),  # ← usa el budget de df_inst si está disponible
-                }
-                comp_encoded = le.transform([row['COMPONENT_TYPE']])[0] if row['COMPONENT_TYPE'] in le.classes_ else 0
-                features['COMPONENT_ENCODED'] = comp_encoded
-                
-                X_pred = pd.DataFrame([features])
-                pred = float(model.predict(X_pred)[0])
-                pred_value = f"{int(pred):,} h"
-                
-                if pred < 0:
-                    risk_label = "❗ Crítico"
-                    risk_color = "#dc2626"
-                elif pred < 500:
-                    risk_label = "⚠️ Alto"
-                    risk_color = "#f59e0b"
-                elif pred < 1500:
-                    risk_label = "🟡 Medio"
-                    risk_color = "#f59e0b"
-                else:
-                    risk_label = "✓ Bajo"
-                    risk_color = "#10b981"
-            else:
-                pred_value, risk_label = "N/A", "Sin datos de inspección"
-        else:
-            pred_value, risk_label = "N/A", "📁 Falta modelo"
-            
-    except Exception as e:
-        pred_value, risk_label = "Error", f"💥 {type(e).__name__[:10]}"
-
-    st.metric("Restante (modelo)", pred_value, delta_color="inverse")
-    st.caption(f"Estado: {risk_label}")
+    # Modelo ya se mostró en el cuadro destacado → aquí puedes dejarlo vacío o repetir si quieres
+    st.write("")  # espacio limpio
 
 # --- Alerta de umbrales superados ---
 umbrales_violados = []
@@ -436,7 +455,7 @@ if 'TBN (mgKOH/g)' in cols and component_sel == 'MOTOR DIESEL':
     plot_bytes, fname = save_plot(fig, f"tbn_{unit_sel}_{component_sel}")
     st.download_button("💾 Save", plot_bytes, file_name=fname, mime="image/png")
 
-# --- Datos operativos (viejo, pero opcionalmente redundante) ---
+# --- Datos operativos ---
 with st.expander("📋 Datos Operativos (desde instalación)", expanded=False):
     if row_inst is not None:
         st.write(f"**Horas actuales (total):** {row_inst['HORAS_VIDA_ACTUAL']:.0f} h")
