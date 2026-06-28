@@ -8,11 +8,10 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 import joblib
-import os
 
 st.set_page_config(layout="wide", page_title="Análisis de Desgaste — Equipo Crítico", page_icon="⚙️")
 st.title("📊 Análisis de Desgaste — Equipo Crítico")
-st.caption(f"Versión 2.3 | Autor: Leonidas | {datetime.now().strftime('%Y-%m-%d')}")
+st.caption(f"Versión 2.4 | Autor: Leonidas | {datetime.now().strftime('%Y-%m-%d')}")
 
 # --- Paleta de colores ---
 COLOR_MAP = {
@@ -37,11 +36,11 @@ def save_plot(fig, prefix):
     buf.seek(0)
     return buf.getvalue(), f"{prefix}_{timestamp}.png"
 
-# --- Cargar datos con rutas seguras ---
+# --- Cargar datos de análisis con rutas seguras ---
 @st.cache_data
-def load_all_data():
-    base_dir = Path(__file__).parent
-    xls_path = base_dir / "Sample_Reports_Mod_Test.xls"
+def load_analysis_data():
+    root = Path(__file__).parent
+    xls_path = root / "Sample_Reports_Mod_Test.xls"
     
     if not xls_path.exists():
         st.error("Archivo 'Sample_Reports_Mod_Test.xls' no encontrado en la raíz.")
@@ -86,25 +85,57 @@ def load_all_data():
     df_all = df_all.dropna(subset=['HOURS_OIL'])
     return df_all
 
+# --- Cargar datos de instalación ---
+@st.cache_data
+def load_installed_data():
+    root = Path(__file__).parent
+    inst_path = root / "COMPONENTS_DRILLS_INSTALLED.xls"
+    
+    if not inst_path.exists():
+        st.warning("Archivo 'COMPONENTS_DRILLS_INSTALLED.xls' no encontrado en la raíz.")
+        return pd.DataFrame(columns=['UNIT_ID', 'COMPONENT_LOCATION', 'FECHA_INSTALACION', 'HORAS_VIDA_ACTUAL', 'BUDGET'])
+
+    try:
+        df_inst = pd.read_excel(inst_path, sheet_name='INSTALLED')
+        df_inst['UNIT_ID'] = df_inst['UNIT_ID'].astype(str).str.strip()
+        df_inst['COMPONENT_LOCATION'] = df_inst['COMPONENT_LOCATION'].astype(str).str.strip()
+        return df_inst
+    except Exception as e:
+        st.error(f"Error al abrir COMPONENTS_DRILLS_INSTALLED.xls: {e}")
+        return pd.DataFrame(columns=['UNIT_ID', 'COMPONENT_LOCATION', 'FECHA_INSTALACION', 'HORAS_VIDA_ACTUAL', 'BUDGET'])
+
 # --- Cargar datos ---
-df_all = load_all_data()
+df_analysis = load_analysis_data()
+df_installed = load_installed_data()
 
 # --- Filtros ---
 st.sidebar.header("🔍 Filtros")
 
-if df_all.empty:
+if df_analysis.empty:
     st.stop()
 
-unit_options = sorted(df_all['UNIT_ID'].unique())
+unit_options = sorted(df_analysis['UNIT_ID'].unique())
 unit_sel = st.sidebar.selectbox("Unidad", options=unit_options)
 
-comp_options = sorted(df_all['COMPONENT_TYPE'].unique())
+comp_options = sorted(df_analysis['COMPONENT_TYPE'].unique())
 component_sel = st.sidebar.selectbox("Componente", options=comp_options)
 
-df_comp = df_all[
-    (df_all['UNIT_ID'] == unit_sel) & 
-    (df_all['COMPONENT_TYPE'] == component_sel)
+df_comp = df_analysis[
+    (df_analysis['UNIT_ID'] == unit_sel) & 
+    (df_analysis['COMPONENT_TYPE'] == component_sel)
 ]
+
+# --- Buscar datos de instalación para el componente actual ---
+row_inst = None
+if not df_installed.empty:
+    row_inst = df_installed[
+        (df_installed['UNIT_ID'] == unit_sel) & 
+        (df_installed['COMPONENT_LOCATION'] == component_sel)
+    ]
+    if not row_inst.empty:
+        row_inst = row_inst.iloc[0]
+    else:
+        row_inst = None
 
 # --- Obtener último análisis ---
 last_hour = "N/A"
@@ -130,7 +161,7 @@ if not df_comp.empty:
 else:
     last_hour, last_date = "N/A", "N/A"
 
-# --- Barra de metadata + predicción ---
+# --- Barra de metadata ---
 col1, col2 = st.columns([3, 1])
 
 with col1:
@@ -141,8 +172,83 @@ with col1:
         unsafe_allow_html=True
     )
 
+# --- Contexto operativo (CORREGIDO: usa COMPONENTS_DRILLS_INSTALLED.xls, formato fecha, color dinámico) ---
+st.markdown("### 📋 Contexto operativo")
+col1, col2, col3, col4 = st.columns(4)
+
+# Helper seguro
+def safe_float(x, default=np.nan):
+    if pd.isna(x) or x is None:
+        return default
+    try:
+        return float(x)
+    except:
+        return default
+
+def safe_str(x, default="N/A"):
+    if pd.isna(x) or x is None:
+        return default
+    return str(x)
+
+# Extraer valores desde df_inst (no desde df_comp)
+serial = safe_str(unit_sel)
+component = safe_str(component_sel)
+
+# Formatear fecha: AGOSTO-15-2021
+inst_date = "N/A"
+if row_inst is not None and 'FECHA_INSTALACION' in row_inst.index:
+    val = row_inst['FECHA_INSTALACION']
+    if pd.notna(val):
+        try:
+            if isinstance(val, str):
+                val = pd.to_datetime(val)
+            month_names = {
+                1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL',
+                5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
+                9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+            }
+            inst_date = f"{month_names[val.month]}-{val.day:02d}-{val.year}"
+        except:
+            inst_date = safe_str(val)
+
+horas_act = safe_float(row_inst['HORAS_VIDA_ACTUAL'] if row_inst is not None else None, default=np.nan)
+budget_val = safe_float(row_inst['BUDGET'] if row_inst is not None else None, default=np.nan)
+
+with col1:
+    st.metric("Serial", serial)
+    st.metric("Componente", component)
 with col2:
-    # Cargar modelo con ruta robusta
+    st.metric("Instalación", inst_date)
+    st.metric("Horas actuales", f"{horas_act:.1f} h" if not np.isnan(horas_act) else "N/A")
+with col3:
+    st.metric("Budget", f"{budget_val:.0f} h" if not np.isnan(budget_val) else "N/A")
+    # --- Restante (determinista) con color dinámico ---
+    if not np.isnan(horas_act) and not np.isnan(budget_val):
+        restante_det = int(budget_val - horas_act)
+        if restante_det > 0:
+            color = "#10b981"
+            label = "✓ Bajo riesgo"
+        elif restante_det == 0:
+            color = "#f59e0b"
+            label = "⚠️ En límite"
+        else:
+            color = "#dc2626"
+            label = "❗ Crítico"
+        
+        st.markdown(
+            f"<div style='font-size:1.1rem; font-weight:bold; color:{color};'>Restante (determinista)</div>"
+            f"<div style='font-size:1.4rem; font-weight:bold; color:{color};'>{restante_det:,} h</div>",
+            unsafe_allow_html=True
+        )
+        st.caption(f"<span style='color:{color};'>{label}</span>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='font-size:1.1rem; font-weight:bold; color:#6c757d;'>Restante (determinista)</div>"
+            "<div style='font-size:1.4rem; font-weight:bold; color:#6c757d;'>N/A</div>",
+            unsafe_allow_html=True
+        )
+with col4:
+    # Modelo (igual que antes — sin cambios)
     pred_value = "N/A"
     risk_label = "📁 Falta modelo"
     risk_color = "#6c757d"
@@ -153,23 +259,20 @@ with col2:
         encoder_path = root / "label_encoder_component.joblib"
         
         if model_path.exists() and encoder_path.exists():
-            try:
-                model = joblib.load(model_path)
-                le = joblib.load(encoder_path)
-                
-                row = df_comp.iloc[0]
-                
-                def safe_float(x):
-                    return float(x) if pd.notna(x) and str(x).replace('.', '').replace('-', '').isdigit() else 0.0
-                
+            model = joblib.load(model_path)
+            le = joblib.load(encoder_path)
+            
+            # Para el modelo, usamos df_comp (datos de inspección actual)
+            row = df_comp.iloc[0] if not df_comp.empty else None
+            if row is not None:
                 features = {
                     'Fe (ppm)': safe_float(row.get('Fe (ppm)', 0)),
                     'Cu (ppm)': safe_float(row.get('Cu (ppm)', 0)),
                     'Si (ppm)': safe_float(row.get('Si (ppm)', 0)),
                     'V100C': safe_float(row.get('V100C', 0)),
                     'TBN (mgKOH/g)': safe_float(row.get('TBN (mgKOH/g)', 0)),
-                    'HOURS_OIL': safe_float(row.get('HOURS_OIL', 0)),
-                    'BUDGET': safe_float(row.get('BUDGET', 8000)),
+                    'HOURS_OIL': safe_float(row.get('HOURS_OIL', 0)),  # ← horas desde último cambio
+                    'BUDGET': safe_float(row.get('BUDGET', budget_val)),  # ← usa el budget de df_inst si está disponible
                 }
                 comp_encoded = le.transform([row['COMPONENT_TYPE']])[0] if row['COMPONENT_TYPE'] in le.classes_ else 0
                 features['COMPONENT_ENCODED'] = comp_encoded
@@ -190,38 +293,34 @@ with col2:
                 else:
                     risk_label = "✓ Bajo"
                     risk_color = "#10b981"
-            except Exception as e:
-                pred_value = "Error"
-                risk_label = f"💥 {type(e).__name__[:10]}"
-                risk_color = "#6c757d"
+            else:
+                pred_value, risk_label = "N/A", "Sin datos de inspección"
         else:
-            # st.warning(f"Modelos no encontrados en: {root}")
-            pred_value, risk_label, risk_color = "N/A", "📁 Falta modelo", "#6c757d"
+            pred_value, risk_label = "N/A", "📁 Falta modelo"
             
     except Exception as e:
-        pred_value, risk_label, risk_color = "Error", f"⚠️ {type(e).__name__}", "#6c757d"
+        pred_value, risk_label = "Error", f"💥 {type(e).__name__[:10]}"
 
-    st.markdown(
-        f"""
-        <div style="
-            background-color: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            padding: 12px;
-            text-align: center;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        ">
-            <p style="color: #e6edf3; font-size: 0.8rem; margin: 4px 0;">Predicción basada en modelo de Random Forest</p>
-            <p style="color: #c9d1d9; font-size: 0.75rem; margin: 2px 0;">entrenado con historial de fallas</p>
-            <h3 style="color: #c9d1d9; font-size: 1.1rem; margin: 8px 0 4px 0;">Vida restante estimada</h3>
-            <p style="font-size: 1.8rem; font-weight: bold; color: {risk_color}; margin: 4px 0;">{pred_value}</p>
-            <div style="display: inline-block; background-color: #161b22; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">
-                <span style="color: {risk_color};">{risk_label}</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    st.metric("Restante (modelo)", pred_value, delta_color="inverse")
+    st.caption(f"Estado: {risk_label}")
+
+# --- Alerta de umbrales superados ---
+umbrales_violados = []
+if not df_comp.empty:
+    fe = safe_float(df_comp['Fe (ppm)'].iloc[0] if 'Fe (ppm)' in df_comp.columns else None)
+    tbn = safe_float(df_comp['TBN (mgKOH/g)'].iloc[0] if 'TBN (mgKOH/g)' in df_comp.columns else None)
+    v100c = safe_float(df_comp['V100C'].iloc[0] if 'V100C' in df_comp.columns else None)
+    
+    if not np.isnan(fe) and fe > 40:
+        umbrales_violados.append("Fe > 40 ppm")
+    if not np.isnan(tbn) and tbn < 5:
+        umbrales_violados.append("TBN < 5 mgKOH/g")
+    if not np.isnan(v100c):
+        if v100c < 12 or v100c > 16:
+            umbrales_violados.append("V100C fuera de rango (<12 o >16)")
+
+if umbrales_violados:
+    st.warning(f"⚠️ Umbrales críticos superados: {', '.join(umbrales_violados)}")
 
 # --- Elementos ---
 with st.sidebar.expander("🔬 Elementos", expanded=False):
@@ -337,29 +436,14 @@ if 'TBN (mgKOH/g)' in cols and component_sel == 'MOTOR DIESEL':
     plot_bytes, fname = save_plot(fig, f"tbn_{unit_sel}_{component_sel}")
     st.download_button("💾 Save", plot_bytes, file_name=fname, mime="image/png")
 
-# --- Datos operativos ---
-with st.expander("📋 Datos Operativos", expanded=False):
-    if not df_comp.empty:
-        latest = df_comp.sort_values('HOURS_OIL', ascending=False).iloc[0]
-        st.write(f"**Horas aceite (ciclo):** {latest['HOURS_OIL']:.0f} h")
-        try:
-            inst_path = Path(__file__).parent / "COMPONENTS_DRILLS_INSTALLED.xls"
-            if inst_path.exists():
-                df_inst = pd.read_excel(inst_path, sheet_name='INSTALLED')
-                df_inst['UNIT_ID'] = df_inst['UNIT_ID'].astype(str).str.strip()
-                df_inst['COMPONENT_LOCATION'] = df_inst['COMPONENT_LOCATION'].astype(str).str.strip()
-                row = df_inst[
-                    (df_inst['UNIT_ID'] == unit_sel) & 
-                    (df_inst['COMPONENT_LOCATION'] == component_sel)
-                ]
-                if not row.empty:
-                    r = row.iloc[0]
-                    st.write(f"- Budget: {r['BUDGET']:.0f} h")
-                    st.write(f"- Restante: {r['REMAINING_LIFE']:.0f} h")
-        except Exception as e:
-            st.write(f"- Error cargando COMPONENTS_DRILLS_INSTALLED.xls: {type(e).__name__}")
+# --- Datos operativos (viejo, pero opcionalmente redundante) ---
+with st.expander("📋 Datos Operativos (desde instalación)", expanded=False):
+    if row_inst is not None:
+        st.write(f"**Horas actuales (total):** {row_inst['HORAS_VIDA_ACTUAL']:.0f} h")
+        st.write(f"**Budget (máx.):** {row_inst['BUDGET']:.0f} h")
+        st.write(f"**Restante (determinista):** {row_inst['BUDGET'] - row_inst['HORAS_VIDA_ACTUAL']:.0f} h")
     else:
-        st.write("No hay datos")
+        st.write("No hay datos de instalación.")
 
 # --- Umbrales ---
 with st.expander("🔍 Umbrales técnicos", expanded=False):
