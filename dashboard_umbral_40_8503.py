@@ -227,8 +227,8 @@ with tab1:
 
     try:
         root = Path(__file__).parent
-        model_path = root / "model_remaining_life.joblib"
-        encoder_path = root / "label_encoder_component.joblib"
+        model_path = root / "model_remaining_life_v4.joblib"
+        encoder_path = root / "label_encoder_component_v4.joblib"
         
         if model_path.exists() and encoder_path.exists():
             model = joblib.load(model_path)
@@ -662,3 +662,14 @@ with tab2:
         st.info("No hay elementos de desgaste ni salud del aceite para graficar en este componente.")
 
 st.caption("💡 Reporte generado automáticamente desde análisis de aceite (SOS). Umbral Fe > 40 ppm aplicable a equipos críticos. Validar con inspección física.")
+
+# 🔍 Diagnóstico rápido — ejecuta esto en tu terminal/local
+print("=== Sample_Reports_Mod_Test.xls ===")
+print(df_analysis.columns.tolist())
+
+print("\n=== COMPONENTS_DRILLS_INSTALLED.xls ===")
+print(df_installed.columns.tolist())
+
+print("\n=== Primer registro de df_comp ===")
+if not df_comp.empty:
+    print(df_comp.iloc[0])
